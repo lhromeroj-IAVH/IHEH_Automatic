@@ -6,4 +6,6 @@ El Índice de huella espacial humana fue creado para para evaluar la variación 
 
 
 ![Metodologia_IHEH](https://github.com/lhromeroj-IAVH/IHEH_Automatic/assets/84154963/ba0ec1d3-091d-4bbb-a97d-8a1fbc5f901e)
+
+
 **Figura 1:** Metodología para el cálculo de Índice Legado de Huella Espacial Humana. Fint corresponde a la intensidad de uso de la tierra y Ftime al tiempo de intervención humana sobre los ecosistemas. 
