@@ -1,0 +1,538 @@
+var scale = 300; //Resolución espacial del producto final
+var year = 2018; 
+
+var Colombia = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017")
+              .filter(ee.Filter.eq('country_na', 'Colombia'));
+
+Map.addLayer(Colombia, {}, 'Colombia', false);
+Map.setCenter(-74.091, 4.739, 5);
+
+// Componente de coberturas y capas estáticas ----------------------------------------
+var esa_file = ee.String('users/PRA2019LHRJ/ESA_LCover_'+year);
+var esa = ee.Image(esa_file);
+var poten = ee.Image('users/forestIntegrityONU/Ecos_Poten');
+var trans = ee.Image('users/forestIntegrityONU/Trans_2014');
+var Embalses = ee.Image('users/forestIntegrityONU/Embalses');
+
+Map.addLayer(esa, {min: 10, max: 220}, 'ESA LandCover 300m Colombia', false);
+
+// Land Use
+
+// RasterStack construction ----------------------------------------------------------
+var stack = esa.select(['b1'],['esa']).int();
+var stack1 = trans.select(['b1'],['trans']).int();
+var stack2 = poten.select(['b1'],['poten']).int();
+var stack3 = Embalses.select(['b1'],['water']).int();
+var lu = stack.addBands(stack1).addBands(stack2).addBands(stack3);
+print(lu);
+
+// Land use Automation with footprint values -----------------------------------------
+
+var lu_codes = lu.expression(
+    "(b('esa')) + (((b('trans')+ 1) * 1000)) + (((b('poten')*10000))) + (((b('water')+ 1) * 1000000))")
+      .float();
+
+Map.addLayer(lu_codes, {min: 1011010, max: 2812220}, 'códigos para LU', false);
+
+var fromToFc = ee.FeatureCollection('users/forestIntegrityONU/Codigos_huella');
+
+// Export.table.toDrive({
+//   collection: fromToFc, 
+//   description: 'Codigos_Huella_LU'
+//   });
+
+var propNames = ee.List(['from', 'to']);
+var fromToList = ee.List(
+  fromToFc.reduceColumns({
+    reducer: ee.Reducer.toList().repeat(propNames.size()),
+    selectors: propNames
+  })
+  .get('list')
+);
+
+var from = fromToList.get(0);
+var to = fromToList.get(1);
+
+var reclassed_lu = lu_codes.remap(from, to, null, 'esa');
+
+// Export.image.toAsset({
+//   image: reclassed_lu,
+//   description: 'LU_for_HEH_'+year,
+//   maxPixels: 1e13,
+//   scale: scale,
+//   region: Colombia
+// });
+
+var lu_file = ee.String("users/PRA2019LHRJ/LU_for_HEH_"+year);
+var lu_for_heh = ee.Image(lu_file);
+
+Map.addLayer(lu_for_heh, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'LU modelo');
+
+// Lu Camilo Correa
+
+var lu_C = ee.Image('users/PRA2019LHRJ/hu_lu_18');
+
+Map.addLayer(lu_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'LU Camilo');
+
+var LU_dif = lu_for_heh.subtract(lu_C);
+
+var histogram_LU_dif = ui.Chart.image.histogram({
+  image: LU_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_LU_dif, 'Diferencia Métodos LU');
+
+
+var dif_LUclass = ee.Image(0)
+                      .where(LU_dif.lte(-1),-1)
+                      .where(LU_dif.eq(0),0)
+                      .where(LU_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_LUclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías LU');
+              
+
+// Population density proposal
+
+var dens_pop_file = ee.String('users/PRA2019LHRJ/DensPop_'+year+'_col');
+var dens_pop = ee.Image(dens_pop_file);
+
+var dp_for_heh = ee.Image(0)
+                    .where(dens_pop.gte(0).and(dens_pop.lte(1.05)), 0)
+                    .where(dens_pop.gt(1.05).and(dens_pop.lte(2.12)), 1)
+                    .where(dens_pop.gt(2.12).and(dens_pop.lte(4.24)), 2)
+                    .where(dens_pop.gt(4.24).and(dens_pop.lte(8.72)), 3)
+                    .where(dens_pop.gt(8.72).and(dens_pop.lte(12.72)), 4)
+                    .where(dens_pop.gt(12.72), 5)
+                    .clip(Colombia);
+
+Map.addLayer(dp_for_heh, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'DP modelo');
+// pd Correa
+
+var dp_C = ee.Image('users/PRA2019LHRJ/hu_pd_18');
+
+Map.addLayer(dp_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'DP Camilo');
+
+var dp_dif = dp_for_heh.subtract(dp_C);
+
+var histogram_dp_dif = ui.Chart.image.histogram({
+  image: dp_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_dp_dif, 'Diferencia Métodos PD');
+
+var dif_DPclass = ee.Image(0)
+                      .where(dp_dif.lte(-1),-1)
+                      .where(dp_dif.eq(0),0)
+                      .where(dp_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_DPclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías PD');
+
+
+// Distance from Settlements
+
+var settles_esa = ee.Image(0)
+                        .where(esa.eq(190),1)
+                        .clip(Colombia);
+
+Map.addLayer(settles_esa, {min:0, max:1, palette: ['white', 'black']}, 'Asentamientos MapBiomas', false);
+
+var settles_dist = settles_esa.fastDistanceTransform({neighborhood: 1024})
+                          .sqrt()
+                          .multiply(300)
+                          .rename('distance')
+                          .clip(Colombia)
+                          .reproject({crs:'EPSG:4326',scale:300});
+
+// Export.image.toAsset({
+//   image: settles_dist,
+//   description: 'DS_for_HEH_'+year,
+//   maxPixels: 1e13,
+//   scale: scale,
+//   region: Colombia
+// });
+
+var DS_distance_file = ee.String("users/PRA2019LHRJ/DS_for_HEH_"+year);
+var DS_distance = ee.Image(DS_distance_file);
+
+Map.addLayer(DS_distance, {min: 0, max: 150000, palette: ["darkgreen", "green", "yellow", "orange", 
+                                  "red", "darkred"]}, 'Distancia a Asentamientos', false);
+
+var ds_for_heh = ee.Image(0)
+                      .where(DS_distance.gte(0).and(DS_distance.lte(3000)),5)
+                      .where(DS_distance.gt(3000).and(DS_distance.lte(6000)),4)
+                      .where(DS_distance.gt(6000).and(DS_distance.lte(10000)),3)
+                      .where(DS_distance.gt(10000).and(DS_distance.lte(15000)),2)
+                      .where(DS_distance.gt(15000).and(DS_distance.lte(25000)),1)
+                      .where(DS_distance.gt(25000),0)
+                      .int()
+                      .clip(Colombia);
+
+Map.addLayer(ds_for_heh, {min: 0, max: 5, palette: ["darkgreen", "green", "yellow", "orange", 
+                                  "red", "darkred"]}, 'DS Modelo');
+
+// DS Camilo
+
+var ds_C = ee.Image('users/PRA2019LHRJ/hu_ds_18');
+
+Map.addLayer(ds_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'DS Camilo');
+
+var ds_dif = ds_for_heh.subtract(ds_C);
+
+var histogram_ds_dif = ui.Chart.image.histogram({
+  image: ds_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_ds_dif, 'Diferencia Métodos DS');
+
+var dif_DSclass = ee.Image(0)
+                      .where(ds_dif.lte(-1),-1)
+                      .where(ds_dif.eq(0),0)
+                      .where(ds_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_DSclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías DS');
+
+
+// Fragmentation Index
+
+var biom_reclassify = function(image){
+  var classified_image = image.remap([10,11,12,30,40,50,60,61,
+                                      80,90,100,110,120,122,130,150,
+                                      153,160,170,180,190,200,210,220],
+                                     [0,1,1,0,0,1,1,1,
+                                     1,1,1,1,1,1,0,0,
+                                      0,1,1,1,0,0,1,1], // 1-Natural, 0-Artificial
+                                     500,
+                                     'b1');
+  return classified_image;
+};
+
+var natural_biom = biom_reclassify(esa);
+
+natural_biom = natural_biom.updateMask(natural_biom.eq(0));
+
+Map.addLayer(natural_biom, {min: 0, max: 1, palette: ['yellow', 'green']}, 'Natural-No Natural Biomes', false);
+
+var nonat_points = natural_biom.sample({
+  region: Colombia,
+  geometries: true,
+  scale: 600
+});
+
+Map.addLayer(nonat_points, {}, 'points no natural', false);
+
+// Export.table.toDrive({                                                                       
+//   collection: nonat_points,                                                               
+//   description: 'nonat_points_'+year,                                                    
+//   folder: 'GEE_Humboldt_2021',
+//   fileFormat: "SHP"
+//   }); 
+
+var if_file = ee.String("users/PRA2019LHRJ/if_"+year);
+var if_ = ee.Image(if_file);
+
+if_ = if_.clip(Colombia)
+                  .reproject({crs:'EPSG:4326',scale:300});
+
+Map.addLayer(if_, {min:0, max:34937, palette: ["darkgreen", "green", "yellow", "orange", 
+                            "red", "darkred"]}, 'Indice Fragmentacion', false);
+
+var if_for_heh = ee.Image(0)
+                      .where(if_.gte(0).and(if_.lt(2878)),0)
+                      .where(if_.gte(2878).and(if_.lt(7399)),1)
+                      .where(if_.gte(7399).and(if_.lt(12469)),2)
+                      .where(if_.gte(12469).and(if_.lt(20689)),3)
+                      .where(if_.gte(20689).and(if_.lt(32883)),4)
+                      .where(if_.gte(32883),5)
+                      .int()
+                      .clip(Colombia);
+
+Map.addLayer(if_for_heh, {min: 0, max: 5, palette: ["darkgreen", "green", "yellow", "orange", "red", 
+                            "darkred"]}, 'IF Modelo');
+
+// IF Correa
+
+var if_C = ee.Image('users/PRA2019LHRJ/hu_fi_18');
+
+Map.addLayer(if_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'IF Camilo');
+
+var if_dif = if_for_heh.subtract(if_C);
+
+var histogram_if_dif = ui.Chart.image.histogram({
+  image: if_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_if_dif, 'Diferencia Métodos IF');
+
+var dif_IFclass = ee.Image(0)
+                      .where(if_dif.lte(-1),-1)
+                      .where(if_dif.eq(0),0)
+                      .where(if_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_IFclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías IF');
+
+
+// Loading and filtering OSM lines data.
+
+// var filter = ee.Filter.inList('highway', ['busway', 'construction',
+//               'living_street', 'motorway', 'motorway_link', 'primary',
+//               'primary_link', 'raceway', 'residential', 'rest_area',
+//               'road', 'secondary', 'secondary_link', 'service', 'services',
+//               'tertiary', 'tertiary_link', 'trunk', 'trunk_link']);
+
+
+var Colombia_roads = ee.FeatureCollection("users/PRA2019LHRJ/Vias_cartoBasica_2019");
+//Colombia_roads = Colombia_roads.filter(filter).filterBounds(Colombia);
+
+// Export.table.toAsset({
+//   collection: Colombia_roads, 
+//   description: 'Roads_filter_col_2020'
+//   });
+
+//var Roads_col_filt = ee.FeatureCollection("users/PRA2019LHRJ/Roads_filter_col_2020");
+
+Map.addLayer(Colombia_roads, {}, 'Roads Col Carto Básica', false);
+
+var col_distRoads = Colombia_roads.distance({searchRadius: 200000, maxError: 50})
+                      .clip(Colombia).reproject({crs:'EPSG:4326',scale:300});
+
+Map.addLayer(col_distRoads, {min: 0, max: 50000, palette: ["darkgreen", "green", "yellow", "orange", 
+                                "red", "darkred"]}, 'Distance to roads', false);
+
+var histogram_DR = ui.Chart.image.histogram({
+  image: col_distRoads, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_DR, 'Distancia a carreteras 2020');
+
+var dr_for_heh = ee.Image(0)
+                      .where(col_distRoads.gt(20000),0)
+                      .where(col_distRoads.gt(8000).and(col_distRoads.lte(20000)),1)
+                      .where(col_distRoads.gt(5000).and(col_distRoads.lte(8000)),2)
+                      .where(col_distRoads.gt(3000).and(col_distRoads.lte(5000)),3)
+                      .where(col_distRoads.gt(1500).and(col_distRoads.lte(3000)),4)
+                      .where(col_distRoads.gte(0).and(col_distRoads.lte(1500)),5)
+                      .int()
+                      .clip(Colombia);
+
+Map.addLayer(dr_for_heh, {min: 0, max: 5, palette: ["darkgreen", "green", "yellow", "orange", "red", 
+                            "darkred"]}, 'DR Modelo');
+
+// DR Correa
+
+var dr_C = ee.Image('users/PRA2019LHRJ/hu_dr_18');
+
+Map.addLayer(dr_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'DR Camilo');
+
+var dr_dif = dr_for_heh.subtract(dr_C);
+
+var histogram_dr_dif = ui.Chart.image.histogram({
+  image: dr_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_dr_dif, 'Diferencia Métodos DR');
+
+var dif_DRclass = ee.Image(0)
+                      .where(dr_dif.lte(-1),-1)
+                      .where(dr_dif.eq(0),0)
+                      .where(dr_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_DRclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías DR');
+
+// Índice de Biomasa
+
+var fromToFc2 = ee.FeatureCollection('users/PRA2019LHRJ/Codigos_Huella_IB');
+
+var propNames = ee.List(['from', 'to']);
+var fromToList2 = ee.List(
+  fromToFc2.reduceColumns({
+    reducer: ee.Reducer.toList().repeat(propNames.size()),
+    selectors: propNames
+  })
+  .get('list')
+);
+
+var from2 = fromToList2.get(0);
+var to2 = fromToList2.get(1);
+
+var ib_for_heh = lu_codes.remap(from2, to2, null, 'esa');
+
+Map.addLayer(ib_for_heh, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'IB Modelo');
+
+// IB Correa
+var bi_C = ee.Image('users/PRA2019LHRJ/hu_bi_18');
+
+Map.addLayer(bi_C, {min: 0, max: 5, palette: ["darkgreen",
+                                                      "lightgreen",
+                                                      "yellow",
+                                                      "orange",
+                                                      "red"]}, 'IB Camilo');
+
+var bi_dif = ib_for_heh.subtract(bi_C);
+
+var histogram_bi_dif = ui.Chart.image.histogram({
+  image: bi_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_bi_dif, 'Diferencia Métodos BI');
+
+var dif_BIclass = ee.Image(0)
+                      .where(bi_dif.lte(-1),-1)
+                      .where(bi_dif.eq(0),0)
+                      .where(bi_dif.gte(1),1)
+                      .clip(Colombia);
+
+Map.addLayer(dif_BIclass, {min: -1, max: 1, palette: ["yellow", "green", 
+              "red"]}, 'Diferencias Metodologías BI');
+
+
+// Time of intervention
+
+var ti = ee.Image('users/forestIntegrityONU/Raw_ti15');
+
+var ti_for_heh = ee.Image(0)
+                      .where(ti.eq(0),0)
+                      .where(ti.gt(0).and(ti.lte(15)),1)
+                      .where(ti.gt(15).and(ti.lte(50)),2)
+                      .where(ti.gt(50).and(ti.lte(150)),3)
+                      .where(ti.gt(150).and(ti.lte(300)),4)
+                      .where(ti.gt(300),5)
+                      .int()
+                      .clip(Colombia);
+
+Map.addLayer(ti_for_heh, {min: 0, max: 5, palette: ["darkgreen", "green", "yellow", "orange", "red", 
+                            "darkred"]}, 'TI Modelo - Camilo');
+                            
+// Human Footprint Index
+
+var HFI_autom = lu_for_heh.add(dp_for_heh)
+                          .add(ds_for_heh)
+                          .add(if_for_heh)
+                          .add(dr_for_heh)
+                          .add(ti_for_heh)
+                          .add(ib_for_heh)
+                          .divide(35)
+                          .multiply(100);
+
+Map.addLayer(HFI_autom, {min: 0, max: 100, palette: ["darkgreen", "green", "yellow", "orange", "red", 
+                              "darkred"]}, 'IHEH');
+
+// Export.image.toAsset({
+//   image: HFI_autom,
+//   description: 'HFI_'+year+'_autom_V2',
+//   maxPixels: 1e13,
+//   scale: 300,
+//   region: Colombia
+// });
+
+
+var HEH_autom_file = ee.String('users/PRA2019LHRJ/HFI_'+year+'_autom_V2');
+var HEH_autom_V2 = ee.Image(HEH_autom_file)
+                      ;
+
+Map.addLayer(HEH_autom_V2, {min: 0, max: 100, palette: ["darkgreen", "green", "yellow", "orange", "red", 
+                              "darkred"]}, 'IHEH V2_'+year);
+                              
+Export.image.toDrive({
+  image: HEH_autom_V2, 
+  description: 'HEH_GEE_2018', 
+  folder: 'GEE_Humboldt_2021', 
+  region: Colombia, 
+  scale: 300, 
+  maxPixels: 1e13
+});
+
+var IHEH_Correa_file = ee.String('users/PRA2019LHRJ/IHEH_'+year);
+var IHEH_Correa = ee.Image(IHEH_Correa_file)
+                    .reproject({crs:'EPSG:4326',scale:300});
+
+var IHEH_dif = HEH_autom_V2.subtract(IHEH_Correa).int();
+
+var histogram_HEHDif = ui.Chart.image.histogram({
+  image: IHEH_dif, 
+  region: Colombia, 
+  scale: 300,
+  maxBuckets: Math.pow(2,8),
+  maxPixels: 1e13
+});
+
+print(histogram_HEHDif, 'Diferencia Métodos HEH');
+
+var dif_HEHclass = ee.Image(0)
+                      .where(IHEH_dif.lt(-5),-1)
+                      .where(IHEH_dif.gte(-5).and(IHEH_dif.lte(5)),0)
+                      .where(IHEH_dif.gt(5),1)
+                      .int()
+                      .clip(Colombia);
+
+Map.addLayer(dif_HEHclass, {min: -1, max: 1, palette: ["orange", "green", 
+              "red"]}, 'Diferencias Metodologías');
